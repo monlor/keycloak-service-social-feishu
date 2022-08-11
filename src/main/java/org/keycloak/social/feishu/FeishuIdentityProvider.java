@@ -37,6 +37,7 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.services.ErrorPage;
 import org.keycloak.services.messages.Messages;
+import org.keycloak.sessions.AuthenticationSessionModel;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.QueryParam;
@@ -140,6 +141,7 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
      */
     @Override
     protected BrokeredIdentityContext extractIdentityFromProfile(EventBuilder event, JsonNode profile) {
+        logger.info("extractIdentityFromProfile");
         logger.info("Received json Profile : " + profile);
 
         String unionID = getJsonProperty(profile, FEISHU_PROFILE_UNION_ID);
@@ -222,6 +224,7 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
      * @param code SNS 授权码
      * @return 存储在 Keycloak 中详细的用户信息
      */
+    @Override
     public BrokeredIdentityContext getFederatedIdentity(String code) {
         try {
             Map<String, String> requestBody = new HashMap<>();
@@ -313,7 +316,6 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
             String userDetailWithUserIdUrl = DEPARTMENT_NAME_URL + departmentId;
             JsonNode responseJson = SimpleHttp.doGet(userDetailWithUserIdUrl, session)
                     .header("Authorization", "Bearer " + getAppAccessToken())
-                    .param("department_id_type", "department_id")
                     .asJson();
             if (responseJson.get("code").asInt(-1) != 0) {
                 logger.warn("Can't get department name , response :" + responseJson);
@@ -403,23 +405,28 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
             if (error != null) {
                 logger.error(error + " for broker login " + getConfig().getProviderId());
                 if (error.equals(ACCESS_DENIED)) {
-                    return callback.cancelled(state);
+                    return callback.cancelled();
                 } else if (error.equals(OAuthErrorException.LOGIN_REQUIRED) || error.equals(OAuthErrorException.INTERACTION_REQUIRED)) {
-                    return callback.error(state, error);
+                    return callback.error(error);
                 } else {
-                    return callback.error(state, Messages.IDENTITY_PROVIDER_UNEXPECTED_ERROR);
+                    return callback.error(Messages.IDENTITY_PROVIDER_UNEXPECTED_ERROR);
                 }
             }
             try {
+
+                AuthenticationSessionModel authSession =
+                        this.callback.getAndVerifyAuthenticationSession(state);
+                session.getContext().setAuthenticationSession(authSession);
 
                 BrokeredIdentityContext federatedIdentity;
 
                 federatedIdentity = getFederatedIdentity(code);
                 // 必须将 state 设置到 code 中 ，否则会报错， 切记！！！！
                 // 此 code 非请求返回的 code， 而是 state
-                federatedIdentity.setCode(state);
+//                federatedIdentity.setCode(state);
                 federatedIdentity.setIdpConfig(getConfig());
                 federatedIdentity.setIdp(FeishuIdentityProvider.this);
+                federatedIdentity.setAuthenticationSession(authSession);
 
                 event.user(federatedIdentity.getBrokerUserId());
                 event.client(getConfig().getClientId());
@@ -440,6 +447,7 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
 
     @Override
     public void updateBrokeredUser(KeycloakSession session, RealmModel realm, UserModel user, BrokeredIdentityContext context) {
+        logger.info("updateBrokeredUser");
         user.setUsername(context.getUsername());
         user.setEmail(context.getEmail());
         user.setFirstName(context.getFirstName());
@@ -481,10 +489,11 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
     public String getJsonProperty(JsonNode jsonNode, String name) {
         if (jsonNode != null && jsonNode.has(name) && !jsonNode.get(name).isNull()) {
             String s = jsonNode.get(name).asText();
-            if (s != null && !s.isEmpty())
+            if (s != null && !s.isEmpty()) {
                 return s;
-            else
+            } else {
                 return "";
+            }
         }
         return "";
     }
@@ -507,10 +516,11 @@ public class FeishuIdentityProvider extends AbstractOAuth2IdentityProvider<Feish
     public String getJsonProperty(JsonNode jsonNode, String name, String defaultValue) {
         if (jsonNode != null && jsonNode.has(name) && !jsonNode.get(name).isNull()) {
             String s = jsonNode.get(name).asText();
-            if (s != null && !s.isEmpty())
+            if (s != null && !s.isEmpty()) {
                 return s;
-            else
+            } else {
                 return defaultValue;
+            }
         }
 
         return defaultValue;
